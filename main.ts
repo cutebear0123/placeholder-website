@@ -2,12 +2,33 @@ import { serveDir, serveFile } from "jsr:@std/http/file-server";
 import { UAParser } from "npm:ua-parser-js";
 
 const template = await Deno.readTextFile("template.html");
+const kv = await Deno.openKv();
 
+function isbot(req: Request) {
+  const pathname = new URL(req.url).pathname;
+  if (pathname.includes(".php") || pathname.includes(".env")) return true;
+  if (req.headers.get("user-agent")?.includes("gptbot")) return true;
+  return false;
+}
 Deno.serve(async (req: Request, conn) => {
   let html = template;
   const pathname = new URL(req.url).pathname;
-  if (pathname.includes(".php")) {
-    const emptyStream = new ReadableStream({});
+  if (isbot(req)) {
+    const start = Date.now();
+    const data = {
+      path: pathname,
+      ip: conn.remoteAddr.hostname,
+      ua: req.headers.get("user-agent"),
+      time: 0,
+    };
+    const emptyStream = new ReadableStream({
+      start() {
+      },
+      async cancel() {
+        data.time = Date.now() - start;
+        await kv.set(["bot", crypto.randomUUID()], data);
+      },
+    });
     return new Response(emptyStream, {
       headers: {
         "content-type": "text/html",
@@ -35,8 +56,9 @@ Deno.serve(async (req: Request, conn) => {
       ))
         .json();
       console.log(data);
-      iploc = `You are located at ${data["countryCode"]} ${data["region"]} ${data["city"]
-        } using ${data["isp"]}`;
+      iploc = `You are located at ${data["countryCode"]} ${data["region"]} ${
+        data["city"]
+      } using ${data["isp"]}`;
     }
     html = html.replace("{iploc}", iploc);
     if (req.headers.has("user-agent")) {
